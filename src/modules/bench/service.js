@@ -61,7 +61,7 @@ export default class BenchService {
     return {
       totalBytes,
       avgMs: totalMs / results.length,
-      avgSpeed: totalBytes / (totalMs / 1000),
+      avgSpeed: totalMs > 0 ? totalBytes / (totalMs / 1000) : 0
     };
   }
 
@@ -73,7 +73,7 @@ export default class BenchService {
    */
   #validateOptions({ requestsQuantity, intervalMs }) {
     if (!Number.isInteger(requestsQuantity) || requestsQuantity < 1) {
-      throw new Error('BenchService: requests должен быть целым числом >= 1');
+      throw new Error('BenchService: requestsQuantity должен быть целым числом >= 1');
     }
     if (!Number.isInteger(intervalMs) || intervalMs < 0) {
       throw new Error('BenchService: intervalMs должен быть целым числом >= 0');

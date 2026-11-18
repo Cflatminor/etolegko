@@ -92,7 +92,7 @@ describe('BenchService', () => {
 
     await assert.rejects(
       () => service.bench({ requestsQuantity: 0, intervalMs: 100 }),
-      /requests должен быть целым числом >= 1/
+      /requestsQuantity должен быть целым числом >= 1/
     );
 
     await assert.rejects(
