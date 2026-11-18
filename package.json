@@ -1,0 +1,14 @@
+{
+  "name": "etolegko",
+  "version": "1.0.0",
+  "description": "Тестовое для etolegko - бенчмарк скорости загрузки на Node.js",
+  "scripts": {
+    "start": "node bench.js https://avatarko.ru/img/kartinka/14/zhivotnye_kot_13379.jpg 10 777"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "author": "roman.bogdanov92@yandex.ru",
+  "license": "ISC"
+}
