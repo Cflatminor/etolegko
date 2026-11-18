@@ -40,13 +40,12 @@ export default class Repository {
   /**
    * @public
    * @method downloadResource
-   * @returns {Promise<HttpResponse<ArrayBuffer>>}
+   * @returns {Promise<HttpResponse<AsyncIterable<Uint8Array>>>}
    * @throws {HttpError}
    */
   downloadResource() {
-    return this.httpClient
-      .get(this.urls.downloadResource, {
-        responseType: HttpClient.responseTypes.ARRAY_BUFFER,
-      });
+    return this.httpClient.get(this.urls.downloadResource, {
+      responseType: HttpClient.responseTypes.STREAM,
+    });
   }
 }

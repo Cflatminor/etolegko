@@ -21,10 +21,11 @@ export async function init() {
   const logger = new StdOutLogger();
 
   const httpClient = new HttpClient({
-    timeoutMs: 15_000,
+    timeoutMs: 300_000, // на случай тяжёлых картинок
+    idleTimeoutMs: 15_000,
     defaultHeaders: {
       'Cache-Control': 'no-cache'
-    },
+    }
   });
 
   const repository = new Repository({

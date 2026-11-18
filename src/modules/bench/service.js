@@ -1,5 +1,6 @@
+import { HttpError } from '../../core/transport/httpClient.js';
+
 /** @typedef {import('../../core/logger/BaseLogger.js').LoggerInterface} LoggerInterface */
-/** @typedef {import('../../core/transport/httpClient.js').HttpError} HttpError */
 
 /** @typedef {import('./repository.js').default} Repository */
 
@@ -119,9 +120,16 @@ export default class BenchService {
     for (let i = 1; i <= requestsQuantity; i++) {
       const startedAt = performance.now();
       const response = await this.repository.downloadResource();
-      const elapsedMs = performance.now() - startedAt;
 
-      const bytes = response.data.byteLength;
+      let bytes = 0;
+
+      if (response.data) {
+        for await (const chunk of response.data) {
+          bytes += chunk.byteLength;
+        }
+      }
+
+      const elapsedMs = performance.now() - startedAt;
       results.push({ bytes, elapsedMs });
 
       this.logger.log(
@@ -140,6 +148,13 @@ export default class BenchService {
     this.logger.log(`Всего скачано: ${formatBytes(summary.totalBytes)}`);
     this.logger.log(`Средняя скорость: ${formatBytes(summary.avgSpeed)}/с`);
 
+
+
+setTimeout(() => {
+  console.error('процесс жив спустя 3 с после завершения');
+  console.error('активные ресурсы:', process.getActiveResourcesInfo());
+}, 5000).unref();
+
     return { ...summary, results };
   }
 
@@ -153,7 +168,7 @@ export default class BenchService {
 
       return { result };
     } catch (error) {
-      if (error.name === 'HttpError') {
+      if (error instanceof HttpError) {
         this.logger.error(`[${error.status}]`, error.data);
 
         return { error };

@@ -12,16 +12,57 @@ export const HttpMethod = Object.freeze({
 });
 
 /**
- * @typedef {'JSON' | 'TEXT' | 'BLOB' | 'ARRAY_BUFFER'} HttpResponseType
+ * @typedef {'JSON' | 'TEXT' | 'BLOB' | 'ARRAY_BUFFER' | 'STREAM'} HttpResponseType
  */
 
-/** @type {Readonly<Record<'JSON'|'TEXT'|'BLOB'|'ARRAY_BUFFER', HttpResponseType>>} */
+/** @type {Readonly<Record<'JSON'|'TEXT'|'BLOB'|'ARRAY_BUFFER'|'STREAM', HttpResponseType>>} */
 export const HttpResponseType = Object.freeze({
   JSON: 'JSON',
   TEXT: 'TEXT',
   BLOB: 'BLOB',
   ARRAY_BUFFER: 'ARRAY_BUFFER',
+  STREAM: 'STREAM',
 });
+
+class IdleTimeout {
+  #controller = new AbortController();
+  #idleMs;
+  #timer = null;
+
+  /**
+   * @param {number} idleMs
+   */
+  constructor(idleMs) {
+    if (!Number.isFinite(idleMs) || idleMs <= 0) {
+      throw new Error('IdleTimeout: idleMs должен быть положительным числом');
+    }
+
+    this.#idleMs = idleMs;
+    this.touch();
+  }
+
+  /** @returns {AbortSignal} */
+  get signal() {
+    return this.#controller.signal;
+  }
+
+  touch() {
+    this.clear();
+
+    this.#timer = setTimeout(() => {
+      this.#controller.abort(
+        new DOMException(`Поток простаивал дольше ${this.#idleMs} мс`, 'TimeoutError')
+      );
+    }, this.#idleMs);
+  }
+
+  clear() {
+    if (this.#timer !== null) {
+      clearTimeout(this.#timer);
+      this.#timer = null;
+    }
+  }
+}
 
 export class HttpError extends Error {
   /**
@@ -47,6 +88,7 @@ export class HttpError extends Error {
  * @typedef {object} HttpClientOptions
  * @property {Record<string, string>} [defaultHeaders]
  * @property {number} [timeoutMs=30000]
+ * @property {number} [idleTimeoutMs=15000]
  */
 
 /**
@@ -59,6 +101,7 @@ export class HttpError extends Error {
  * @property {Record<string, string>} [headers={}]
  * @property {HttpResponseType} [responseType='JSON']
  * @property {number} [timeoutMs]
+ * @property {number} [idleTimeoutMs]
  * @property {AbortSignal} [signal]
  */
 
@@ -72,6 +115,7 @@ export class HttpError extends Error {
  */
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_IDLE_TIMEOUT_MS = 15_000;
 
 export class HttpClient {
   static methods = HttpMethod;
@@ -79,13 +123,19 @@ export class HttpClient {
 
   #defaultHeaders;
   #timeoutMs;
+  #idleTimeoutMs;
 
   /**
    * @param {HttpClientOptions} [options]
    */
-  constructor({ defaultHeaders = {}, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  constructor({
+    defaultHeaders = {},
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    idleTimeoutMs = DEFAULT_IDLE_TIMEOUT_MS,
+  } = {}) {
     this.#defaultHeaders = { ...defaultHeaders };
     this.#timeoutMs = timeoutMs;
+    this.#idleTimeoutMs = idleTimeoutMs;
   }
 
   /**
@@ -103,6 +153,7 @@ export class HttpClient {
     headers = {},
     responseType = HttpResponseType.JSON,
     timeoutMs = this.#timeoutMs,
+    idleTimeoutMs = this.#idleTimeoutMs,
     signal,
   }) {
     if (!url) {
@@ -112,39 +163,54 @@ export class HttpClient {
     const resolvedUrl = this.#buildUrl(url, params, query);
     const requestHeaders = this.#mergeHeaders(this.#defaultHeaders, headers);
 
-    const timeoutSignal = AbortSignal.timeout(timeoutMs);
-    const combinedSignal = signal
-      ? AbortSignal.any([signal, timeoutSignal])
-      : timeoutSignal;
+    const signals = [AbortSignal.timeout(timeoutMs)];
+    const idleController = idleTimeoutMs ? new IdleTimeout(idleTimeoutMs) : null;
+
+    if (idleController) signals.push(idleController.signal);
+    if (signal) signals.push(signal);
 
     const init = {
       method,
       headers: requestHeaders,
-      signal: combinedSignal,
+      signal: AbortSignal.any(signals),
     };
 
     if (body !== undefined && method !== HttpMethod.GET && method !== HttpMethod.DELETE) {
       init.body = this.#prepareBody(body, requestHeaders);
     }
 
-    const response = await fetch(resolvedUrl, init);
-    const data = await this.#parseBody(response, responseType);
+    try {
+      const response = await fetch(resolvedUrl, init);
+      const data = await this.#parseBody(response, responseType, idleController);
 
-    if (!response.ok) {
-      throw new HttpError(`HTTP ${response.status} ${response.statusText}`, {
-        status: response.status,
-        statusText: response.statusText,
+      if (!response.ok) {
+        if (responseType === HttpResponseType.STREAM) {
+          idleController?.clear();
+          await response.body?.cancel();
+        }
+
+        throw new HttpError(`HTTP ${response.status} ${response.statusText}`, {
+          status: response.status,
+          statusText: response.statusText,
+          data,
+          headers: response.headers,
+        });
+      }
+
+      if (responseType !== HttpResponseType.STREAM) {
+        idleController?.clear();
+      }
+
+      return {
         data,
+        status: response.status,
         headers: response.headers,
-      });
+        raw: response,
+      };
+    } catch (error) {
+      idleController?.clear();
+      throw error;
     }
-
-    return {
-      data,
-      status: response.status,
-      headers: response.headers,
-      raw: response,
-    };
   }
 
   /**
@@ -256,10 +322,16 @@ export class HttpClient {
     return isAbsolute ? parsed.toString() : `${parsed.pathname}${parsed.search}`;
   }
 
-  async #parseBody(response, responseType) {
-    if (response.status === 204) return null;
+  async #parseBody(response, responseType, idleController) {
+    if (response.status === 204 || response.body === null) {
+      idleController?.clear();
+
+      return null;
+    }
 
     switch (responseType) {
+      case HttpResponseType.STREAM:
+        return this.#wrapStream(response.body, idleController);
       case HttpResponseType.TEXT:
         return response.text();
       case HttpResponseType.BLOB:
@@ -269,13 +341,30 @@ export class HttpClient {
       case HttpResponseType.JSON:
       default: {
         const text = await response.text();
+
         if (!text) return null;
+        
         try {
           return JSON.parse(text);
         } catch {
           return text;
         }
       }
+    }
+  }
+
+  /**
+   * @param {ReadableStream<Uint8Array> | null} body
+   * @param {IdleTimeout | null} idleController
+   */
+  async *#wrapStream(body, idleController) {
+    try {
+      for await (const chunk of body) {
+        idleController?.touch();
+        yield chunk;
+      }
+    } finally {
+      idleController?.clear();
     }
   }
 }

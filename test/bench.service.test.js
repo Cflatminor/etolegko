@@ -1,10 +1,23 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { Readable } from 'node:stream';
 
 import BenchService from '../src/modules/bench/service.js';
 import { HttpError } from '../src/core/transport/httpClient.js';
 
 describe('BenchService', () => {
+  function createMockStream(bytes, chunksCount = 2) {
+    const chunkSize = Math.floor(bytes / chunksCount);
+    const remainder = bytes % chunksCount;
+
+    const chunks = Array.from({ length: chunksCount }, (_, i) => {
+      const size = i === chunksCount - 1 ? chunkSize + remainder : chunkSize;
+      return new Uint8Array(size);
+    });
+
+    return Readable.from(chunks);
+  }
+
   function createSut(downloadImpl) {
     const logger = {
       log: mock.fn(),
@@ -13,7 +26,7 @@ describe('BenchService', () => {
 
     const repository = {
       downloadResource: mock.fn(
-        downloadImpl ?? (async () => ({ data: new ArrayBuffer(1024), status: 200 }))
+        downloadImpl ?? (async () => ({ data: createMockStream(1024), status: 200 }))
       ),
     };
 
@@ -36,7 +49,7 @@ describe('BenchService', () => {
 
   it('возвращает результат успешного прогона без ошибок', async () => {
     const { service, logger } = createSut(async () => ({
-      data: new ArrayBuffer(512),
+      data: createMockStream(512),
       status: 200,
     }));
 
