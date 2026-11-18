@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Тестовое для etolegko - бенчмарк скорости загрузки на Node.js",
   "scripts": {
+    "test": "node --test",
     "start": "node bench.js https://avatarko.ru/img/kartinka/14/zhivotnye_kot_13379.jpg 10 777"
   },
   "type": "module",

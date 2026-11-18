@@ -154,9 +154,15 @@ export default class BenchService {
       return { result };
     } catch (error) {
       if (error.name === 'HttpError') {
-          this.logger.error(`[${error.status}]`, error.data);
+        this.logger.error(`[${error.status}]`, error.data);
 
-          return { error };
+        return { error };
+      }
+
+      if (error.cause?.code || error.name === 'TimeoutError') {
+        this.logger.error(`Сетевая ошибка: ${error.message}`);
+
+        return { error };
       }
 
       throw error;
