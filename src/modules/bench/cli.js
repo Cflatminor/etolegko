@@ -11,8 +11,8 @@
  * @throws {Error}
  */
 export function parseCli(argv) {
-  const [url, countArg, intervalArg] = argv.slice(2);
-  const requests = countArg === undefined ? 10 : Number(countArg);
+  const [url, quantityArg, intervalArg] = argv.slice(2);
+  const requestsQuantity = quantityArg === undefined ? 10 : Number(quantityArg);
   const intervalMs = intervalArg === undefined ? 500 : Number(intervalArg);
 
   if (!url) {
@@ -31,7 +31,7 @@ export function parseCli(argv) {
     throw new Error('URL должен начинаться с http:// или https://');
   }
 
-  if (!Number.isInteger(requests) || requests < 1) {
+  if (!Number.isInteger(requestsQuantity) || requestsQuantity < 1) {
     throw new Error('Количество запросов должно быть целым числом >= 1');
   }
 
@@ -39,5 +39,5 @@ export function parseCli(argv) {
     throw new Error('Интервал должен быть целым числом >= 0');
   }
 
-  return { url: parsedUrl.toString(), requests, intervalMs };
+  return { url: parsedUrl.toString(), requestsQuantity, intervalMs };
 }
