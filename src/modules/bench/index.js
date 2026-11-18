@@ -44,8 +44,8 @@ export async function init() {
       requestsQuantity: options.requests,
       intervalMs: options.intervalMs,
     });
-
-    process.exitCode = result ? 0 : 1;
+    
+    process.exitCode = result && !result.failure ? 0 : 1;
   } catch (error) {
     logger.error(`Сетевая ошибка: ${error.message}`);
 

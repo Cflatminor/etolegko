@@ -32,6 +32,21 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isExpectedError(error) {
+  return (
+    error instanceof HttpError ||
+    Boolean(error.cause?.code) ||
+    error.name === 'TimeoutError' ||
+    error.name === 'AbortError'
+  );
+}
+
+function describeError(error) {
+  if (error instanceof HttpError) return `HTTP ${error.status} ${error.statusText}`;
+
+  return error.cause?.code ? `${error.message} (${error.cause.code})` : error.message;
+}
+
 export default class BenchService {
   /**
    * @param {{
@@ -56,6 +71,14 @@ export default class BenchService {
    * @returns {{ totalBytes: number, avgMs: number, avgSpeed: number }}
    */
   #summarize(results) {
+    if (!results.length) {
+      return {
+        totalBytes: 0,
+        avgMs: 0,
+        avgSpeed: 0
+      }
+    }
+
     const totalBytes = results.reduce((sum, r) => sum + r.bytes, 0);
     const totalMs = results.reduce((sum, r) => sum + r.elapsedMs, 0);
 
@@ -117,45 +140,48 @@ export default class BenchService {
     /** @type {Array<{ bytes: number, elapsedMs: number }>} */
     const results = [];
 
+    let failure = null;
+
     for (let i = 1; i <= requestsQuantity; i++) {
-      const startedAt = performance.now();
-      const response = await this.repository.downloadResource();
+      try {
+        const startedAt = performance.now();
+        const response = await this.repository.downloadResource();
 
-      let bytes = 0;
+        let bytes = 0;
 
-      if (response.data) {
-        for await (const chunk of response.data) {
-          bytes += chunk.byteLength;
+        if (response.data) {
+          for await (const chunk of response.data) {
+            bytes += chunk.byteLength;
+          }
         }
+
+        const elapsedMs = performance.now() - startedAt;
+        results.push({ bytes, elapsedMs });
+
+        this.logger.log(
+          `${String(i).padStart(3)} | ${elapsedMs.toFixed(0).padStart(9)} | ${formatBytes(bytes).padStart(7)}`
+        );
+      } catch (error) {
+        if (!isExpectedError(error)) throw error;
+
+        failure = { index: i, error };
+        this.logger.error(`Запрос ${i} не удался: ${describeError(error)}`);
+        
+        break;
       }
 
-      const elapsedMs = performance.now() - startedAt;
-      results.push({ bytes, elapsedMs });
-
-      this.logger.log(
-        `${String(i).padStart(3)} | ${elapsedMs.toFixed(0).padStart(9)} | ${formatBytes(bytes).padStart(7)}`
-      );
-
-      if (i < requestsQuantity && intervalMs > 0) {
-        await sleep(intervalMs);
-      }
+      if (i < requestsQuantity && intervalMs > 0) await sleep(intervalMs);
     }
 
     const summary = this.#summarize(results);
 
     this.logger.log('');
+    this.logger.log(`Успешных запросов: ${results.length} из ${requestsQuantity}`);
     this.logger.log(`Среднее время запроса: ${summary.avgMs.toFixed(0)} мс`);
     this.logger.log(`Всего скачано: ${formatBytes(summary.totalBytes)}`);
     this.logger.log(`Средняя скорость: ${formatBytes(summary.avgSpeed)}/с`);
 
-
-
-setTimeout(() => {
-  console.error('процесс жив спустя 3 с после завершения');
-  console.error('активные ресурсы:', process.getActiveResourcesInfo());
-}, 5000).unref();
-
-    return { ...summary, results };
+    return { ...summary, results, failure };
   }
 
   /**
@@ -164,23 +190,15 @@ setTimeout(() => {
    */
   async benchSafe(options = {}) {
     try {
-      const result = await this.bench(options);
-
-      return { result };
+      return {
+        result: await this.bench(options)
+      }
     } catch (error) {
-      if (error instanceof HttpError) {
-        this.logger.error(`[${error.status}]`, error.data);
+      this.logger.error(`Непредвиденная ошибка: ${error.message}`);
 
-        return { error };
+      return {
+        error
       }
-
-      if (error.cause?.code || error.name === 'TimeoutError') {
-        this.logger.error(`Сетевая ошибка: ${error.message}`);
-
-        return { error };
-      }
-
-      throw error;
     }
   }
 }

@@ -55,6 +55,7 @@ describe('BenchService', () => {
 
     const outcome = await service.benchSafe({ requestsQuantity: 2, intervalMs: 0 });
 
+    assert.equal(outcome.result.failure, null);
     assert.equal(outcome.error, undefined);
     assert.equal(outcome.result.totalBytes, 1024);
     assert.equal(outcome.result.results.length, 2);
@@ -80,12 +81,38 @@ describe('BenchService', () => {
     const { service, logger } = createSut(async () => {
       throw httpError;
     });
-
+    
     const outcome = await service.benchSafe({ requestsQuantity: 1, intervalMs: 0 });
 
-    assert.equal(outcome.result, undefined);
-    assert.equal(outcome.error, httpError);
+    assert.equal(outcome.error, undefined);
+    assert.equal(outcome.result.results.length, 0);
+    assert.equal(outcome.result.failure.index, 1);
+    assert.equal(outcome.result.failure.error, httpError);
     assert.equal(logger.error.mock.calls.length, 1);
+  });
+
+  
+  it('сохраняет результаты до сбоя', async () => {
+    const httpError = new HttpError('HTTP 500 Internal Server Error', {
+      status: 500, statusText: 'Internal Server Error',
+      data: null, headers: new Headers(),
+    });
+
+    let call = 0;
+
+    const { service } = createSut(async () => {
+      if (++call === 3) throw httpError;
+
+      return { data: createMockStream(512), status: 200 };
+    });
+
+    const outcome = await service.benchSafe({ requestsQuantity: 5, intervalMs: 0 });
+
+    assert.equal(outcome.error, undefined);
+    assert.equal(outcome.result.results.length, 2);
+    assert.equal(outcome.result.totalBytes, 1024);
+    assert.equal(outcome.result.failure.index, 3);
+    assert.equal(outcome.result.failure.error, httpError);
   });
 
   it('пробрасывает неожиданные сетевые исключения выше', async () => {
@@ -95,7 +122,7 @@ describe('BenchService', () => {
     });
 
     await assert.rejects(
-      () => service.benchSafe({ requestsQuantity: 1, intervalMs: 0 }),
+      () => service.bench({ requestsQuantity: 1, intervalMs: 0 }),
       networkError
     );
   });
@@ -124,8 +151,9 @@ describe('BenchService', () => {
 
     const outcome = await service.benchSafe({ requestsQuantity: 1, intervalMs: 0 });
 
-    assert.equal(outcome.result, undefined);
-    assert.equal(outcome.error, networkError);
+    assert.equal(outcome.error, undefined);
+    assert.equal(outcome.result.failure.error, networkError);
+    assert.equal(outcome.result.failure.index, 1);
     assert.equal(logger.error.mock.calls.length, 1);
   });
 });
